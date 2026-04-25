@@ -14,7 +14,7 @@ import analyze
 import brokers
 import notify
 import store
-from daily_run import build_message
+from daily_run import build_message, parse_days_list
 from fetch_ranking import fetch
 
 DATES = [
@@ -35,14 +35,18 @@ def backfill_broker(broker: brokers.Broker, settings: dict) -> None:
     history = store.load(broker.a, broker.b)
     latest = DATES[-1]
     top = analyze.top_n(history[latest.isoformat()], settings["daily_top_n"])
-    hits = analyze.consecutive_in_top(
-        history,
-        days=settings["consecutive_days"],
-        top_n=settings["consecutive_top_n"],
-    )
+    windows = [
+        (
+            days,
+            analyze.consecutive_in_top(
+                history, days=days, top_n=settings["consecutive_top_n"]
+            ),
+        )
+        for days in settings["consecutive_days"]
+    ]
     body = build_message(
-        broker, latest, top, hits,
-        settings["daily_top_n"], settings["consecutive_days"], settings["consecutive_top_n"],
+        broker, latest, top, windows,
+        settings["daily_top_n"], settings["consecutive_top_n"],
     )
     text = (
         f"【測試報告】backfill {DATES[0]:%Y-%m-%d} ~ {DATES[-1]:%Y-%m-%d}\n"
@@ -59,7 +63,7 @@ def main() -> int:
     broker_list = brokers.from_env()
     settings = {
         "daily_top_n": int(os.getenv("DAILY_TOP_N", "5")),
-        "consecutive_days": int(os.getenv("CONSECUTIVE_DAYS", "5")),
+        "consecutive_days": parse_days_list(os.getenv("CONSECUTIVE_DAYS", "5")),
         "consecutive_top_n": int(os.getenv("CONSECUTIVE_TOP_N", "10")),
     }
 

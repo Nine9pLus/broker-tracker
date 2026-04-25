@@ -2,10 +2,6 @@
 
 每天收盤後抓富邦 e 證券「券商進出排行」（zgb0），把**今日買超前 N 名**與**連續 N 個交易日都進前 K 名**的股票推到 Telegram。每個券商各發一封獨立訊息。
 
-選股方法論參考 Threads @simply.elise3065 的「舅舅教看券商分點」系列。
-
-本專案為**獨立執行**，與 banini-tracker 完全隔離（獨立 venv、獨立 .env、獨立 Telegram bot、獨立排程任務名）。
-
 ## 設計
 
 - **資料源**：`https://fubon-ebrokerdj.fbs.com.tw/z/zg/zgb/zgb0.djhtm?a=<broker>&b=<branch>&c=B&e=<date>&f=<date>`
@@ -42,8 +38,6 @@ cd /d E:\broker-tracker
 ```
 
 ## 建立新 Telegram bot
-
-本專案**不要**重用 banini bot，請建一隻獨立的：
 
 1. 在 Telegram 找 [`@BotFather`](https://t.me/BotFather)，傳 `/newbot`，依指示命名（建議 username 含 `broker` 或 `tracker`）。
 2. 取得 token（形如 `123456:ABC-DEF...`），填入 `.env` 的 `TG_BOT_TOKEN=`。
@@ -112,10 +106,11 @@ Unregister-ScheduledTask -TaskName 'BrokerTracker_1500' -Confirm:$false
 4. 00631L 元大台灣50正2  +1,191,960
 5. 2454 聯發科  +976,341
 
-─ 連5日入榜前10 ─
+─ 連3日入榜前10 ─
 (無)
 
-資料來源：富邦 e 證券 zgb0
+─ 連5日入榜前10 ─
+(無)
 ```
 
 ## 驗證

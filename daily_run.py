@@ -23,9 +23,8 @@ def build_message(
     broker: brokers.Broker,
     target_date: date,
     top: list[StockRow],
-    hits: list[analyze.ConsecutiveHit],
+    windows: list[tuple[int, list[analyze.ConsecutiveHit]]],
     daily_top_n: int,
-    consecutive_days: int,
     consecutive_top_n: int,
 ) -> str:
     lines: list[str] = []
@@ -40,18 +39,23 @@ def build_message(
     else:
         for r in top:
             lines.append(f"{r['rank']}. {r['code']} {r['name']}  +{r['net']:,}")
-    lines.append("")
-    lines.append(f"─ 連{consecutive_days}日入榜前{consecutive_top_n} ─")
-    if not hits:
-        lines.append("(無)")
-    else:
-        for h in hits:
-            lines.append(
-                f"{h['code']} {h['name']}（連{h['days_in_row']}日，最新買超 +{h['latest_net']:,}）"
-            )
-    lines.append("")
-    lines.append("資料來源：富邦 e 證券 zgb0")
+
+    for days, hits in windows:
+        lines.append("")
+        lines.append(f"─ 連{days}日入榜前{consecutive_top_n} ─")
+        if not hits:
+            lines.append("(無)")
+        else:
+            for h in hits:
+                lines.append(
+                    f"{h['code']} {h['name']}（連{h['days_in_row']}日，最新買超 +{h['latest_net']:,}）"
+                )
+
     return "\n".join(lines)
+
+
+def parse_days_list(raw: str) -> list[int]:
+    return [int(p.strip()) for p in raw.split(",") if p.strip()]
 
 
 def run_one(broker: brokers.Broker, target_date: date, settings: dict) -> None:
@@ -60,14 +64,18 @@ def run_one(broker: brokers.Broker, target_date: date, settings: dict) -> None:
 
     history = store.load(broker.a, broker.b)
     top = analyze.top_n(rows, settings["daily_top_n"])
-    hits = analyze.consecutive_in_top(
-        history,
-        days=settings["consecutive_days"],
-        top_n=settings["consecutive_top_n"],
-    )
+    windows = [
+        (
+            days,
+            analyze.consecutive_in_top(
+                history, days=days, top_n=settings["consecutive_top_n"]
+            ),
+        )
+        for days in settings["consecutive_days"]
+    ]
     text = build_message(
-        broker, target_date, top, hits,
-        settings["daily_top_n"], settings["consecutive_days"], settings["consecutive_top_n"],
+        broker, target_date, top, windows,
+        settings["daily_top_n"], settings["consecutive_top_n"],
     )
     notify.send(text)
     print(text)
@@ -79,7 +87,7 @@ def main() -> int:
     broker_list = brokers.from_env()
     settings = {
         "daily_top_n": int(os.getenv("DAILY_TOP_N", "5")),
-        "consecutive_days": int(os.getenv("CONSECUTIVE_DAYS", "5")),
+        "consecutive_days": parse_days_list(os.getenv("CONSECUTIVE_DAYS", "5")),
         "consecutive_top_n": int(os.getenv("CONSECUTIVE_TOP_N", "10")),
     }
 
