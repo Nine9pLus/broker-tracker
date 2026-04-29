@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import TypedDict
 
 from fetch_ranking import StockRow
@@ -22,13 +23,18 @@ def consecutive_in_top(
     history: dict[str, list[StockRow]],
     days: int = 5,
     top_n: int = 10,
+    as_of: date | None = None,
 ) -> list[ConsecutiveHit]:
     """Return stocks that appear in top-`top_n` for the most recent `days` snapshots.
 
     Snapshots are taken in chronological order (sorted by date key); we look at the
-    last `days` snapshots regardless of calendar gaps (weekends/holidays).
+    last `days` snapshots whose date <= `as_of` (defaults to the latest snapshot),
+    regardless of calendar gaps (weekends/holidays). Empty snapshots are excluded.
     """
-    sorted_dates = sorted(history.keys())
+    sorted_dates = sorted(d for d, rows in history.items() if rows)
+    if as_of is not None:
+        cutoff = as_of.isoformat()
+        sorted_dates = [d for d in sorted_dates if d <= cutoff]
     if len(sorted_dates) < days:
         return []
 

@@ -58,7 +58,37 @@ def parse_days_list(raw: str) -> list[int]:
     return [int(p.strip()) for p in raw.split(",") if p.strip()]
 
 
+def previous_weekdays(target_date: date, n: int) -> list[date]:
+    """Return the `n` weekdays strictly before `target_date`, oldest first."""
+    out: list[date] = []
+    d = target_date - timedelta(days=1)
+    while len(out) < n:
+        if d.weekday() < 5:
+            out.append(d)
+        d -= timedelta(days=1)
+    return list(reversed(out))
+
+
+def ensure_history(broker: brokers.Broker, target_date: date, lookback_days: int) -> None:
+    """Backfill any missing weekday snapshots in the [target-lookback, target-1] window."""
+    history = store.load(broker.a, broker.b)
+    for d in previous_weekdays(target_date, lookback_days):
+        if history.get(d.isoformat()):
+            continue
+        try:
+            rows = fetch(d, broker.a, broker.b)
+        except Exception as e:
+            print(f"  backfill {broker.label} {d} failed: {e}", file=sys.stderr)
+            continue
+        if rows:
+            store.save(broker.a, broker.b, d, rows)
+            print(f"  backfilled {broker.label} {d}: {len(rows)} rows")
+
+
 def run_one(broker: brokers.Broker, target_date: date, settings: dict) -> None:
+    lookback = max(settings["consecutive_days"]) if settings["consecutive_days"] else 5
+    ensure_history(broker, target_date, lookback)
+
     rows = fetch(target_date, broker.a, broker.b)
     store.save(broker.a, broker.b, target_date, rows)
 
@@ -68,7 +98,7 @@ def run_one(broker: brokers.Broker, target_date: date, settings: dict) -> None:
         (
             days,
             analyze.consecutive_in_top(
-                history, days=days, top_n=settings["consecutive_top_n"]
+                history, days=days, top_n=settings["consecutive_top_n"], as_of=target_date
             ),
         )
         for days in settings["consecutive_days"]

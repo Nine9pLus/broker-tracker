@@ -24,6 +24,10 @@ def load(broker_a: str, broker_b: str) -> dict[str, list[StockRow]]:
 
 
 def save(broker_a: str, broker_b: str, target_date: date, rows: list[StockRow]) -> None:
+    if not rows:
+        # Skip empty snapshots (e.g., running before market data is published)
+        # so they don't pollute the consecutive-day window.
+        return
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     data = load(broker_a, broker_b)
     data[target_date.isoformat()] = rows

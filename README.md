@@ -8,32 +8,34 @@
   - `c=B` 表示金額（單位：仟元）
   - **多券商**：在 `.env` 用 `BROKERS=a:b:label,a:b:label,...` 列舉
   - 頁面為 Big5 編碼；憑證缺 SKI，因此用 `verify=False` 抓取
+- **自動補齊**：執行時自動偵測並回填 target_date 前 N 個平日缺漏的快照，確保連續入榜分析不因資料缺漏而失準
 - **歷史**：每個券商一個檔 `data/<a>_<b>.json`（`{"YYYY-MM-DD": [{rank, code, name, buy, sell, net}, ...]}`）
+- **空快照保護**：若當日無資料（如盤後尚未更新），不會寫入 JSON
 - **訊息**：`notify.py` 直接 import 同目錄的 `telegram_outbound.py`，純文字 ≤4096 字
 
 ## 檔案
 
-| 檔案 | 用途 |
-|------|------|
-| `fetch_ranking.py` | 抓 URL + 解析 HTML（買超表，前 50 列）|
-| `brokers.py` | 解析 `BROKERS` env，產生多券商清單 |
-| `store.py` | 讀寫 `data/<a>_<b>.json` |
-| `analyze.py` | `top_n` 與 `consecutive_in_top(days, top_n)` |
-| `notify.py` | 從 `.env` 讀 token/target，呼叫 `telegram_outbound.send_message_via_bot` |
-| `telegram_outbound.py` | Bot API sendMessage（stdlib only）|
-| `daily_run.py` | 每日入口：對每個券商各跑一次（各自存、各自分析、各發一封 Telegram）|
-| `backfill_test.py` | 測試入口：兩家券商各跑 2026-04-20 ~ 04-24 |
-| `find_chat_id.py` | 從 Bot `getUpdates` 列出可用的 chat_id |
-| `send_test.py` | 發一則測試訊息驗證 token + chat_id 可用 |
-| `register_task.ps1` | 註冊 Windows Task Scheduler（週一~五 15:00，任務名 `BrokerTracker_1500`）|
+| 檔案                   | 用途                                                                                |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| `fetch_ranking.py`     | 抓 URL + 解析 HTML（買超表，前 50 列）                                              |
+| `brokers.py`           | 解析 `BROKERS` env，產生多券商清單                                                  |
+| `store.py`             | 讀寫 `data/<a>_<b>.json`                                                            |
+| `analyze.py`           | `top_n` 與 `consecutive_in_top(days, top_n)`                                        |
+| `notify.py`            | 從 `.env` 讀 token/target，呼叫 `telegram_outbound.send_message_via_bot`            |
+| `telegram_outbound.py` | Bot API sendMessage（stdlib only）                                                  |
+| `daily_run.py`         | 每日入口：對每個券商各跑一次（自動補齊缺漏平日快照、存檔、分析、各發一封 Telegram） |
+| `backfill_test.py`     | 測試入口：兩家券商各跑 2026-04-20 ~ 04-24                                           |
+| `find_chat_id.py`      | 從 Bot `getUpdates` 列出可用的 chat_id                                              |
+| `send_test.py`         | 發一則測試訊息驗證 token + chat_id 可用                                             |
+| `register_task.ps1`    | 註冊 Windows Task Scheduler（週一~五 17:30，任務名 `BrokerTracker_1730`）           |
 
 ## 安裝
 
-需要 Python 3.10+（本機用 uv 安裝的 3.14）。
+需要 Python 3.10+。
 
 ```
-cd /d E:\broker-tracker
-"C:\Users\ShihTH\AppData\Roaming\uv\python\cpython-3.14-windows-x86_64-none\python.exe" -m venv .venv
+cd /d <project-dir>
+python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 ```
 
@@ -60,35 +62,40 @@ TG_BOT_TOKEN=<新 bot 的 token>
 TG_TARGET=<chat_id>
 BROKERS=9800:9800:元大證券,9200:9268:凱基-台北
 DAILY_TOP_N=5
-CONSECUTIVE_DAYS=5
+CONSECUTIVE_DAYS=3,5
 CONSECUTIVE_TOP_N=10
 ```
 
 ## 使用
 
 **單日抓取（不發 Telegram）**
+
 ```
 .venv\Scripts\python fetch_ranking.py --date 2026-4-24 --broker-a 9800 --broker-b 9800 --top 10
 ```
 
 **測試 5 日 backfill（會發 Telegram，每家券商一封）**
+
 ```
 .venv\Scripts\python backfill_test.py
 ```
 
 **今日入口（會發 Telegram，遇假日自動退到上一個交易日）**
+
 ```
 .venv\Scripts\python daily_run.py
 ```
 
-**註冊每日 15:00 排程**
+**註冊每日 17:30 排程**
+
 ```
 powershell -ExecutionPolicy Bypass -File .\register_task.ps1
 ```
 
 **移除排程**
+
 ```
-Unregister-ScheduledTask -TaskName 'BrokerTracker_1500' -Confirm:$false
+Unregister-ScheduledTask -TaskName 'BrokerTracker_1730' -Confirm:$false
 ```
 
 ## 訊息格式範例
@@ -115,9 +122,9 @@ Unregister-ScheduledTask -TaskName 'BrokerTracker_1500' -Confirm:$false
 
 ## 驗證
 
-| 動作 | 預期結果 |
-|------|----------|
-| `fetch_ranking.py --date 2026-4-24 ...` | 印出 10 列（中文正常需 `PYTHONIOENCODING=utf-8 PYTHONUTF8=1`）|
-| `send_test.py` | Telegram 收到測試訊息 |
-| `backfill_test.py` | `data/9800_9800.json` 與 `data/9200_9268.json` 各有 5 個日期 key；Telegram 收到 2 封測試報告 |
-| `Get-ScheduledTask -TaskName 'BrokerTracker_*'` | 任務 Ready |
+| 動作                                            | 預期結果                                                                                     |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `fetch_ranking.py --date 2026-4-24 ...`         | 印出 10 列（中文正常需 `PYTHONIOENCODING=utf-8 PYTHONUTF8=1`）                               |
+| `send_test.py`                                  | Telegram 收到測試訊息                                                                        |
+| `backfill_test.py`                              | `data/9800_9800.json` 與 `data/9200_9268.json` 各有 5 個日期 key；Telegram 收到 2 封測試報告 |
+| `Get-ScheduledTask -TaskName 'BrokerTracker_*'` | 任務 Ready                                                                                   |
