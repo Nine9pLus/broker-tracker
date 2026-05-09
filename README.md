@@ -1,6 +1,6 @@
 # broker-tracker — 券商分點買超選股工具
 
-每天收盤後抓富邦 e 證券「券商進出排行」（zgb0），把**今日買超前 N 名**與**連續 N 個交易日都進前 K 名**的股票推到 Telegram。每個券商各發一封獨立訊息。
+每個平日早上 09:30 抓富邦 e 證券「券商進出排行」（zgb0）前一個有資料的交易日資料，把**前 1 日買超前 N 名**與**連續 N 個交易日都進前 K 名**的股票推到 Telegram。每個券商各發一封獨立訊息。
 
 ## 設計
 
@@ -8,7 +8,7 @@
   - `c=B` 表示金額（單位：仟元）
   - **多券商**：在 `.env` 用 `BROKERS=a:b:label,a:b:label,...` 列舉
   - 頁面為 Big5 編碼；憑證缺 SKI，因此用 `verify=False` 抓取
-- **自動補齊**：執行時自動偵測並回填 target_date 前 N 個平日缺漏的快照，確保連續入榜分析不因資料缺漏而失準
+- **自動補齊**：執行時自動偵測並回填 target_date 前 N 個平日缺漏的快照；若遇到國定假日或無資料日會略過空快照，確保連續入榜分析不因資料缺漏而失準
 - **歷史**：每個券商一個檔 `data/<a>_<b>.json`（`{"YYYY-MM-DD": [{rank, code, name, buy, sell, net}, ...]}`）
 - **空快照保護**：若當日無資料（如盤後尚未更新），不會寫入 JSON
 - **訊息**：`notify.py` 直接 import 同目錄的 `telegram_outbound.py`，純文字 ≤4096 字
@@ -23,11 +23,11 @@
 | `analyze.py`           | `top_n` 與 `consecutive_in_top(days, top_n)`                                        |
 | `notify.py`            | 從 `.env` 讀 token/target，呼叫 `telegram_outbound.send_message_via_bot`            |
 | `telegram_outbound.py` | Bot API sendMessage（stdlib only）                                                  |
-| `daily_run.py`         | 每日入口：對每個券商各跑一次（自動補齊缺漏平日快照、存檔、分析、各發一封 Telegram） |
+| `daily_run.py`         | 每日入口：對每個券商各跑一次（訊息日期用執行日、資料抓前一個有資料的交易日、自動補齊缺漏平日快照、存檔、分析、各發一封 Telegram） |
 | `backfill_test.py`     | 測試入口：兩家券商各跑 2026-04-20 ~ 04-24                                           |
 | `find_chat_id.py`      | 從 Bot `getUpdates` 列出可用的 chat_id                                              |
 | `send_test.py`         | 發一則測試訊息驗證 token + chat_id 可用                                             |
-| `register_task.ps1`    | 註冊 Windows Task Scheduler（週一~五 17:30，任務名 `BrokerTracker_1730`）           |
+| `register_task.ps1`    | 註冊 Windows Task Scheduler（週一~五 09:30，任務名 `BrokerTracker_0930`）           |
 
 ## 安裝
 
@@ -80,13 +80,19 @@ CONSECUTIVE_TOP_N=10
 .venv\Scripts\python backfill_test.py
 ```
 
-**今日入口（會發 Telegram，遇假日自動退到上一個交易日）**
+**每日入口（會發 Telegram；訊息日期用執行日，資料抓前一個有資料的交易日）**
 
 ```
 .venv\Scripts\python daily_run.py
 ```
 
-**註冊每日 17:30 排程**
+**指定訊息日期手動發送（例：發送 2026-05-04 版；若 2026-05-01 無資料，會自動改抓 2026-04-30）**
+
+```
+.venv\Scripts\python daily_run.py --run-date 2026-05-04
+```
+
+**註冊平日 09:30 排程**
 
 ```
 powershell -ExecutionPolicy Bypass -File .\register_task.ps1
@@ -95,7 +101,7 @@ powershell -ExecutionPolicy Bypass -File .\register_task.ps1
 **移除排程**
 
 ```
-Unregister-ScheduledTask -TaskName 'BrokerTracker_1730' -Confirm:$false
+Unregister-ScheduledTask -TaskName 'BrokerTracker_0930' -Confirm:$false
 ```
 
 ## 訊息格式範例
@@ -103,10 +109,10 @@ Unregister-ScheduledTask -TaskName 'BrokerTracker_1730' -Confirm:$false
 每個券商獨立發送一封：
 
 ```
-【元大證券 買超排行】2026-04-24（五）
+【元大證券 買超排行】2026-04-30（四）
 券商分點：a=9800 b=9800　單位：仟元
 
-─ 今日前5 ─
+─ 前1日(4/29)前5 ─
 1. 2330 台積電  +2,952,812
 2. 3189 景碩  +1,735,808
 3. 0050 元大台灣50  +1,305,149

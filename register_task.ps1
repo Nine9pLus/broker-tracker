@@ -3,14 +3,14 @@
   Register Windows Task Scheduler task for the broker-tracker daily pipeline.
 
 .DESCRIPTION
-  Creates a weekly task (Mon-Fri) that runs daily_run.py once at 17:30, then exits.
+  Creates a weekly task (Mon-Fri) that runs daily_run.py once at 09:30, then exits.
   Replaces existing task of the same name.
 
   Run from any shell:
       powershell -ExecutionPolicy Bypass -File .\register_task.ps1
 
   Remove later with:
-      Unregister-ScheduledTask -TaskName 'BrokerTracker_1730' -Confirm:$false
+      Unregister-ScheduledTask -TaskName 'BrokerTracker_0930' -Confirm:$false
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -27,10 +27,11 @@ if (-not (Test-Path $DailyScript)) { throw "daily_run.py not found: $DailyScript
 if (-not (Test-Path $EnvFile))     { Write-Warning ".env not found at $EnvFile -- script will fail at runtime until you create one." }
 if (-not (Test-Path $LogDir))      { New-Item -ItemType Directory -Path $LogDir | Out-Null }
 
-$TaskName = 'BrokerTracker_1730'
-$Hour     = 17
+$TaskName = 'BrokerTracker_0930'
+$Hour     = 9
 $Minute   = 30
 $Days     = @('Monday','Tuesday','Wednesday','Thursday','Friday')
+$LegacyTaskNames = @('BrokerTracker_1500', 'BrokerTracker_1730')
 
 $cmdLine  = 'set PYTHONIOENCODING=utf-8 && set PYTHONUTF8=1 && "' + $PythonExe + '" "' + $DailyScript + '" >> "' + $LogFile + '" 2>&1'
 $argString = '/c ' + $cmdLine
@@ -60,6 +61,13 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Write-Host "Removed existing task: $TaskName"
 }
 
+foreach ($LegacyTaskName in $LegacyTaskNames) {
+    if (Get-ScheduledTask -TaskName $LegacyTaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $LegacyTaskName -Confirm:$false
+        Write-Host "Removed legacy task: $LegacyTaskName"
+    }
+}
+
 Register-ScheduledTask `
     -TaskName $TaskName `
     -Description "Run broker-tracker daily pipeline once at $('{0:D2}:{1:D2}' -f $Hour, $Minute) Mon-Fri" `
@@ -77,4 +85,4 @@ Write-Host 'Verify:'
 Write-Host "    Get-ScheduledTask -TaskName 'BrokerTracker_*' | Format-Table TaskName, State, @{n='NextRun';e={(Get-ScheduledTaskInfo `$_).NextRunTime}}"
 Write-Host ''
 Write-Host 'Test-fire immediately:'
-Write-Host "    Start-ScheduledTask -TaskName 'BrokerTracker_1730'"
+Write-Host "    Start-ScheduledTask -TaskName 'BrokerTracker_0930'"

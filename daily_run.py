@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import traceback
@@ -21,7 +22,8 @@ WEEKDAY_LABEL = ["一", "二", "三", "四", "五", "六", "日"]
 
 def build_message(
     broker: brokers.Broker,
-    target_date: date,
+    run_date: date,
+    data_date: date,
     top: list[StockRow],
     windows: list[tuple[int, list[analyze.ConsecutiveHit]]],
     daily_top_n: int,
@@ -29,11 +31,11 @@ def build_message(
 ) -> str:
     lines: list[str] = []
     lines.append(
-        f"【{broker.label} 買超排行】{target_date:%Y-%m-%d}（{WEEKDAY_LABEL[target_date.weekday()]}）"
+        f"【{broker.label} 買超排行】{run_date:%Y-%m-%d}（{WEEKDAY_LABEL[run_date.weekday()]}）"
     )
     lines.append(f"券商分點：a={broker.a} b={broker.b}　單位：仟元")
     lines.append("")
-    lines.append(f"─ 今日前{daily_top_n} ─")
+    lines.append(f"─ 前1日({data_date.month}/{data_date.day})前{daily_top_n} ─")
     if not top:
         lines.append("(查無資料)")
     else:
@@ -56,6 +58,18 @@ def build_message(
 
 def parse_days_list(raw: str) -> list[int]:
     return [int(p.strip()) for p in raw.split(",") if p.strip()]
+
+
+def parse_date(raw: str) -> date:
+    y, m, d = (int(x) for x in raw.split("-"))
+    return date(y, m, d)
+
+
+def previous_weekday(target_date: date) -> date:
+    d = target_date - timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
 
 
 def previous_weekdays(target_date: date, n: int) -> list[date]:
@@ -85,12 +99,28 @@ def ensure_history(broker: brokers.Broker, target_date: date, lookback_days: int
             print(f"  backfilled {broker.label} {d}: {len(rows)} rows")
 
 
-def run_one(broker: brokers.Broker, target_date: date, settings: dict) -> None:
-    lookback = max(settings["consecutive_days"]) if settings["consecutive_days"] else 5
-    ensure_history(broker, target_date, lookback)
+def fetch_latest_available_weekday(
+    broker: brokers.Broker, run_date: date, max_lookback_days: int = 10
+) -> tuple[date, list[StockRow]]:
+    """Fetch the latest weekday before run_date that actually has ranking rows."""
+    data_date = previous_weekday(run_date)
+    for _ in range(max_lookback_days):
+        rows = fetch(data_date, broker.a, broker.b)
+        if rows:
+            return data_date, rows
+        print(f"  skipped empty/non-trading day {broker.label} {data_date}")
+        data_date = previous_weekday(data_date)
+    raise RuntimeError(
+        f"No ranking data found for {broker.label} within {max_lookback_days} weekdays before {run_date}"
+    )
 
-    rows = fetch(target_date, broker.a, broker.b)
-    store.save(broker.a, broker.b, target_date, rows)
+
+def run_one(broker: brokers.Broker, run_date: date, settings: dict) -> None:
+    data_date, rows = fetch_latest_available_weekday(broker, run_date)
+    lookback = max(settings["consecutive_days"]) if settings["consecutive_days"] else 5
+    ensure_history(broker, data_date, lookback)
+
+    store.save(broker.a, broker.b, data_date, rows)
 
     history = store.load(broker.a, broker.b)
     top = analyze.top_n(rows, settings["daily_top_n"])
@@ -98,13 +128,13 @@ def run_one(broker: brokers.Broker, target_date: date, settings: dict) -> None:
         (
             days,
             analyze.consecutive_in_top(
-                history, days=days, top_n=settings["consecutive_top_n"], as_of=target_date
+                history, days=days, top_n=settings["consecutive_top_n"], as_of=data_date
             ),
         )
         for days in settings["consecutive_days"]
     ]
     text = build_message(
-        broker, target_date, top, windows,
+        broker, run_date, data_date, top, windows,
         settings["daily_top_n"], settings["consecutive_top_n"],
     )
     notify.send(text)
@@ -113,6 +143,13 @@ def run_one(broker: brokers.Broker, target_date: date, settings: dict) -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Fetch previous weekday rankings and send Telegram.")
+    parser.add_argument(
+        "--run-date",
+        help="Message date in YYYY-MM-DD. Defaults to today, or previous Friday on weekends.",
+    )
+    args = parser.parse_args()
+
     load_dotenv(Path(__file__).parent / ".env")
     broker_list = brokers.from_env()
     settings = {
@@ -121,20 +158,20 @@ def main() -> int:
         "consecutive_top_n": int(os.getenv("CONSECUTIVE_TOP_N", "10")),
     }
 
-    today = date.today()
-    while today.weekday() >= 5:
-        today -= timedelta(days=1)
+    run_date = parse_date(args.run_date) if args.run_date else date.today()
+    while run_date.weekday() >= 5:
+        run_date -= timedelta(days=1)
 
     rc = 0
     for broker in broker_list:
         try:
-            run_one(broker, today, settings)
+            run_one(broker, run_date, settings)
         except Exception:
             rc = 1
             tb = traceback.format_exc()[-3000:]
             print(tb, file=sys.stderr)
             try:
-                notify.send(f"[trading 執行失敗] {broker.label} {today}\n{tb}")
+                notify.send(f"[trading 執行失敗] {broker.label} {run_date}\n{tb}")
             except Exception as e:
                 print(f"notify failed for {broker.label}: {e}", file=sys.stderr)
     return rc
